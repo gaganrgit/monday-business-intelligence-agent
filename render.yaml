@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: monday-business-intelligence-agent
+    env: python
+    plan: starter
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "bash start.sh"
+    envVars:
+      - key: MONDAY_API_TOKEN
+        sync: false
+      - key: DEALS_BOARD_ID
+        sync: false
+      - key: WORKORDERS_BOARD_ID
+        sync: false
+      - key: FIREWORKS_API_KEY
+        sync: false
+      - key: FIREWORKS_MODEL
+        value: accounts/fireworks/models/llama-v3p1-70b-instruct
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PYTHON_VERSION
+        value: 3.11.9
+    healthCheckPath: /

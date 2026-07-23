@@ -1,0 +1,4 @@
+# Combined dependencies for the single Render web service that runs
+# both FastAPI (backend) and Streamlit (frontend).
+-r backend/requirements.txt
+-r frontend/requirements.txt
