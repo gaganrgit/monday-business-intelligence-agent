@@ -110,20 +110,20 @@ class ChatOrchestrator:
             intents & {
                 "pipeline", "revenue", "sector_performance", "deals_by_stage",
                 "upcoming_closures", "customer_lookup", "leadership_update",
-                "time_intelligence",
+                "time_intelligence", "data_quality",
             }
         )
         include_revenue = bool(
             intents & {
                 "revenue", "sector_performance", "customer_lookup",
-                "leadership_update", "time_intelligence",
+                "leadership_update", "time_intelligence", "data_quality",
             }
         )
         include_workorders = bool(
             intents & {
                 "delayed_work_orders", "execution_summary", "billing_summary",
                 "pending_receivables", "collection_summary", "customer_lookup",
-                "leadership_update",
+                "leadership_update", "data_quality",
             }
         )
         # Always include at least pipeline + revenue for generic questions

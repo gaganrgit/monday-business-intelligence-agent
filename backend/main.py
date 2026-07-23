@@ -18,7 +18,11 @@ from fastapi.responses import PlainTextResponse
 from backend.app.config import settings
 from backend.app.logger import get_logger
 from backend.app.schemas import ChatRequest, ChatResponse, HealthResponse
-from backend.analytics.report_generator import generate_leadership_report_markdown
+from backend.analytics import analytics_engine as ae
+from backend.analytics.report_generator import (
+    build_full_analytics_summary,
+    generate_leadership_report_markdown,
+)
 from backend.services.chat_orchestrator import ChatOrchestrator
 from backend.services.fireworks_service import FireworksService
 from backend.services.monday_service import MondayService, MondayServiceError
@@ -103,6 +107,37 @@ async def leadership_summary() -> str:
         raise HTTPException(
             status_code=500,
             detail="Something went wrong while generating the leadership summary. Please try again.",
+        )
+
+
+@app.get("/dashboard-data")
+async def dashboard_data() -> dict:
+    """Return live analytics metrics and executive leaderboards as JSON.
+
+    Powers the Streamlit dashboard/leaderboard UI. Reuses the exact same
+    cleaning + analytics-engine functions as /leadership-summary, so the
+    numbers shown in the dashboard always match the narrative report.
+    """
+    monday_service = MondayService()
+
+    try:
+        deals_raw = monday_service.fetch_board_items(settings.deals_board_id, "Deals")
+        wo_raw = monday_service.fetch_board_items(settings.workorders_board_id, "Work Orders")
+    except MondayServiceError as exc:
+        logger.error(f"Monday.com integration failure: {exc}")
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    try:
+        deals_df, deals_quality = clean_deals(deals_raw)
+        wo_df, wo_quality = clean_work_orders(wo_raw)
+        summary = build_full_analytics_summary(deals_df, wo_df, deals_quality, wo_quality)
+        leaderboards = ae.build_leaderboards(deals_df, wo_df)
+        return {"analytics": summary, "leaderboards": leaderboards}
+    except Exception as exc:
+        logger.error(f"Unhandled error building dashboard data: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail="Something went wrong while building the dashboard. Please try again.",
         )
 
 

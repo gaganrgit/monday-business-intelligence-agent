@@ -309,6 +309,11 @@ def build_evidence(
                     f"Top customer by revenue: {top.get('client_code', 'N/A')} "
                     f"({format_currency(top.get('total_revenue', 0))})."
                 )
+                top_3_cust = [
+                    f"{c.get('client_code')}: {format_currency(c.get('total_revenue', 0))}"
+                    for c in revenue_kpis["top_customers"][:3]
+                ]
+                facts.append(f"Top 3 customers by revenue: {', '.join(top_3_cust)}.")
             if revenue_kpis.get("revenue_by_sector"):
                 top_sec = revenue_kpis["revenue_by_sector"][0]
                 sec_name = top_sec.get("sector") or top_sec.get("group_column") or "Unspecified"
@@ -392,6 +397,14 @@ def build_evidence(
             data_quality = {"deals": deals_quality, "work_orders": wo_quality}
             warnings.extend(deals_quality.get("warnings", []))
             warnings.extend(wo_quality.get("warnings", []))
+
+            if deals_quality.get("duplicate_clients_list"):
+                dups_str = ", ".join([f"{item['value']} ({item['count']} deals)" for item in deals_quality["duplicate_clients_list"][:5]])
+                facts.append(f"Deals board duplicate client codes: {dups_str}.")
+
+            if wo_quality.get("duplicate_customers_list"):
+                dups_str = ", ".join([f"{item['value']} ({item['count']} work orders)" for item in wo_quality["duplicate_customers_list"][:5]])
+                facts.append(f"Work Orders board duplicate customer codes: {dups_str}.")
         except Exception as exc:
             warnings.append(f"Data quality check failed: {exc}")
             logger.error(f"VALIDATION ERROR: Data quality check failed: {exc}")

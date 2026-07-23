@@ -71,6 +71,13 @@ INTENT_KEYWORDS = {
     "collection_summary": ["collection", "collected", "collections"],
     "customer_lookup": ["customer", "client", "which customers", "account", "active deals and delayed", "cross-board", "cross board"],
     "leadership_update": ["leadership update", "leadership summary", "executive summary"],
+    "data_quality": [
+        "data quality", "quality", "anomaly", "anomalies", "data health",
+        "missing value", "missing values", "duplicate", "duplicates",
+        "duplicate record", "duplicate records", "duplicate customer",
+        "duplicate client", "data issue", "data issues", "bad data",
+        "missing data", "data integrity", "data errors", "incomplete data",
+    ],
     "time_intelligence": [
         "this month", "last month", "this quarter", "last quarter",
         "this year", "last year", "this week", "last week",
@@ -204,6 +211,19 @@ def parse_query(message: str) -> ParsedQuery:
     text_lower = message.lower().strip()
 
     parsed = ParsedQuery()
+
+    # Direct response to a clarification prompt
+    if text_lower in {"yes", "open", "open deals", "only open", "only open deals"}:
+        parsed.intents = ["pipeline"]
+        parsed.only_open = True
+        parsed.needs_clarification = False
+        return parsed
+    elif text_lower in {"no", "all", "all deals", "every deal", "everything"}:
+        parsed.intents = ["pipeline"]
+        parsed.only_open = False
+        parsed.needs_clarification = False
+        return parsed
+
     parsed.intents = _detect_intents(text_lower)
     parsed.sector = _detect_sector(message)
     parsed.quarter = _detect_quarter(text_lower)
@@ -233,10 +253,12 @@ def parse_query(message: str) -> ParsedQuery:
     if not parsed.intents:
         parsed.intents = ["pipeline", "revenue"]
 
-    # Ambiguity check: bare "pipeline" question without qualifying whether
-    # it means open deals only or everything.
+    # Ambiguity check: ONLY trigger clarification if "pipeline" or "deal" was explicitly asked
+    # without qualifying whether it means open deals only or everything, and not querying data quality.
+    has_explicit_pipeline_kw = bool(re.search(r"\b(pipeline|open deals|deal pipeline)\b", text_lower))
     if (
-        "pipeline" in parsed.intents
+        has_explicit_pipeline_kw
+        and "data_quality" not in parsed.intents
         and parsed.only_open is None
         and len(text_lower.split()) <= 4
     ):

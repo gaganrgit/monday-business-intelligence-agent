@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from backend.app.logger import get_logger
+from backend.helpers.calculation_helper import rank_by_sum, top_n
 
 logger = get_logger(__name__)
 
@@ -334,3 +335,96 @@ def filter_by_quarter(deals_df: pd.DataFrame, quarter: int, year: int) -> pd.Dat
     mask = df["_eff_date"].notna() & (df["_eff_date"] >= q_start) & (df["_eff_date"] <= q_end)
     filtered = deals_df[mask.values]
     return filtered if not filtered.empty else deals_df  # fall back to all data if nothing in range
+
+
+# ----------------------------------------------------------------------
+# Executive leaderboards
+#
+# Thin wrappers around backend.helpers.calculation_helper's existing
+# rank_by_sum / top_n utilities -- no new ranking logic is introduced,
+# they are simply shaped into board-aware, JSON-serializable leaderboards.
+# ----------------------------------------------------------------------
+
+def top_customers_leaderboard(deals_df: pd.DataFrame, n: int = 10) -> List[Dict[str, Any]]:
+    """Top customers ranked by total deal value (open + closed)."""
+    if deals_df.empty or "client_code" not in deals_df.columns:
+        return []
+    df = deals_df[deals_df["client_code"].astype(str).str.strip() != ""]
+    ranked = rank_by_sum(df, "client_code", "deal_value")[:n]
+    return [
+        {"rank": i + 1, "customer_code": row["client_code"], "total_deal_value": round(float(row["deal_value"]), 2)}
+        for i, row in enumerate(ranked)
+    ]
+
+
+def top_sectors_leaderboard(deals_df: pd.DataFrame, n: int = 10) -> List[Dict[str, Any]]:
+    """Top sectors ranked by total deal value (reuses revenue_by_sector, already sorted)."""
+    sectors = revenue_by_sector(deals_df)
+    return [{"rank": i + 1, **s} for i, s in enumerate(sectors[:n])]
+
+
+def largest_deals_leaderboard(deals_df: pd.DataFrame, n: int = 10) -> List[Dict[str, Any]]:
+    """The single largest individual deals by value."""
+    if deals_df.empty or "deal_value" not in deals_df.columns:
+        return []
+    rows = top_n(deals_df, "deal_value", n)
+    return [
+        {
+            "rank": i + 1,
+            "deal_name": row.get("deal_name", "Unnamed Deal"),
+            "client_code": row.get("client_code", ""),
+            "sector": row.get("sector", ""),
+            "deal_status": row.get("deal_status", ""),
+            "deal_value": round(float(row.get("deal_value", 0.0)), 2),
+        }
+        for i, row in enumerate(rows)
+    ]
+
+
+def top_performers_leaderboard(deals_df: pd.DataFrame, n: int = 10) -> List[Dict[str, Any]]:
+    """Top deal owners ranked by total deal value they own."""
+    if deals_df.empty or "owner_code" not in deals_df.columns:
+        return []
+    df = deals_df[deals_df["owner_code"].astype(str).str.strip() != ""]
+    ranked = rank_by_sum(df, "owner_code", "deal_value")[:n]
+    return [
+        {"rank": i + 1, "owner_code": row["owner_code"], "total_deal_value": round(float(row["deal_value"]), 2)}
+        for i, row in enumerate(ranked)
+    ]
+
+
+def top_billing_customers_leaderboard(wo_df: pd.DataFrame, n: int = 10) -> List[Dict[str, Any]]:
+    """Top customers ranked by total invoiced amount."""
+    if wo_df.empty or "customer_code" not in wo_df.columns or "invoice_amount" not in wo_df.columns:
+        return []
+    df = wo_df[wo_df["customer_code"].astype(str).str.strip() != ""]
+    ranked = rank_by_sum(df, "customer_code", "invoice_amount")[:n]
+    return [
+        {"rank": i + 1, "customer_code": row["customer_code"], "total_invoiced": round(float(row["invoice_amount"]), 2)}
+        for i, row in enumerate(ranked)
+    ]
+
+
+def top_receivables_leaderboard(wo_df: pd.DataFrame, n: int = 10) -> List[Dict[str, Any]]:
+    """Customers with the highest outstanding receivables."""
+    if wo_df.empty or "customer_code" not in wo_df.columns or "amount_receivable" not in wo_df.columns:
+        return []
+    df = wo_df[wo_df["customer_code"].astype(str).str.strip() != ""]
+    ranked = rank_by_sum(df, "customer_code", "amount_receivable")[:n]
+    return [
+        {"rank": i + 1, "customer_code": row["customer_code"], "total_receivable": round(float(row["amount_receivable"]), 2)}
+        for i, row in enumerate(ranked)
+        if row["amount_receivable"] > 0
+    ]
+
+
+def build_leaderboards(deals_df: pd.DataFrame, wo_df: pd.DataFrame, n: int = 10) -> Dict[str, Any]:
+    """Assemble every executive leaderboard into a single JSON-serializable dict."""
+    return {
+        "top_customers": top_customers_leaderboard(deals_df, n),
+        "top_sectors": top_sectors_leaderboard(deals_df, n),
+        "largest_deals": largest_deals_leaderboard(deals_df, n),
+        "top_performers": top_performers_leaderboard(deals_df, n),
+        "top_billing_customers": top_billing_customers_leaderboard(wo_df, n),
+        "top_receivables": top_receivables_leaderboard(wo_df, n),
+    }

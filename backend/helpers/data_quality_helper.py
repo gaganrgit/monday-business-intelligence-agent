@@ -41,6 +41,8 @@ def compute_deals_quality(df: pd.DataFrame) -> Dict[str, Any]:
     # Duplicates
     duplicate_deals = _duplicate_count(df, "deal_name")
     duplicate_clients = _duplicate_count(df, "client_code")
+    duplicate_deals_list = _duplicate_list(df, "deal_name")
+    duplicate_clients_list = _duplicate_list(df, "client_code")
 
     # Zero-value deals
     zero_value_deals = 0
@@ -59,7 +61,11 @@ def compute_deals_quality(df: pd.DataFrame) -> Dict[str, Any]:
     if zero_value_deals > 0:
         warnings.append(f"{zero_value_deals} deals with zero deal value.")
     if duplicate_deals > 0:
-        warnings.append(f"{duplicate_deals} duplicate deal names detected.")
+        names_str = ", ".join([f"{item['value']} ({item['count']}x)" for item in duplicate_deals_list[:5]])
+        warnings.append(f"{duplicate_deals} duplicate deal names detected ({names_str}).")
+    if duplicate_clients > 0:
+        clients_str = ", ".join([f"{item['value']} ({item['count']}x)" for item in duplicate_clients_list[:5]])
+        warnings.append(f"{duplicate_clients} duplicate client codes detected ({clients_str}).")
 
     return {
         "board": "deals",
@@ -76,6 +82,8 @@ def compute_deals_quality(df: pd.DataFrame) -> Dict[str, Any]:
         "zero_value_deals": zero_value_deals,
         "duplicate_deals": duplicate_deals,
         "duplicate_clients": duplicate_clients,
+        "duplicate_deals_list": duplicate_deals_list,
+        "duplicate_clients_list": duplicate_clients_list,
         "warnings": warnings,
     }
 
@@ -101,6 +109,8 @@ def compute_workorders_quality(df: pd.DataFrame) -> Dict[str, Any]:
 
     duplicate_work_orders = _duplicate_count(df, "deal_name")
     duplicate_customers = _duplicate_count(df, "customer_code")
+    duplicate_work_orders_list = _duplicate_list(df, "deal_name")
+    duplicate_customers_list = _duplicate_list(df, "customer_code")
 
     warnings: List[str] = []
     if missing_customer > 0:
@@ -110,7 +120,11 @@ def compute_workorders_quality(df: pd.DataFrame) -> Dict[str, Any]:
     if invalid_amounts > 0:
         warnings.append(f"{invalid_amounts} work orders with negative invoice amount.")
     if duplicate_work_orders > 0:
-        warnings.append(f"{duplicate_work_orders} duplicate work order names detected.")
+        names_str = ", ".join([f"{item['value']} ({item['count']}x)" for item in duplicate_work_orders_list[:5]])
+        warnings.append(f"{duplicate_work_orders} duplicate work order names detected ({names_str}).")
+    if duplicate_customers > 0:
+        cust_str = ", ".join([f"{item['value']} ({item['count']}x)" for item in duplicate_customers_list[:5]])
+        warnings.append(f"{duplicate_customers} duplicate customer codes detected ({cust_str}).")
 
     return {
         "board": "work_orders",
@@ -124,6 +138,8 @@ def compute_workorders_quality(df: pd.DataFrame) -> Dict[str, Any]:
         "invalid_amounts": invalid_amounts,
         "duplicate_work_orders": duplicate_work_orders,
         "duplicate_customers": duplicate_customers,
+        "duplicate_work_orders_list": duplicate_work_orders_list,
+        "duplicate_customers_list": duplicate_customers_list,
         "warnings": warnings,
     }
 
@@ -151,6 +167,19 @@ def _duplicate_count(df: pd.DataFrame, col: str) -> int:
     # Count records that share a name/code with at least one other record
     vc = df[col].dropna().value_counts()
     return int((vc > 1).sum())
+
+
+def _duplicate_list(df: pd.DataFrame, col: str, max_items: int = 10) -> List[Dict[str, Any]]:
+    if col not in df.columns:
+        return []
+    series = df[col].dropna().astype(str).str.strip()
+    series = series[series != ""]
+    vc = series.value_counts()
+    dups = vc[vc > 1]
+    result = []
+    for val, count in dups.head(max_items).items():
+        result.append({"value": str(val), "count": int(count)})
+    return result
 
 
 def _empty_quality(board: str) -> Dict[str, Any]:
