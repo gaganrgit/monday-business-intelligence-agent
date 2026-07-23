@@ -14,6 +14,10 @@ from typing import Any, Dict, Iterable, List
 
 import pandas as pd
 
+from backend.app.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 # ============================================================
 # SAFE CONVERSION
@@ -31,18 +35,24 @@ def safe_numeric(value: Any, default: float = 0.0) -> float:
         return float(value)
 
     if isinstance(value, str):
-        value = (
+        cleaned_val = (
             value.replace(",", "")
             .replace("₹", "")
             .replace("$", "")
             .strip()
         )
-        if value == "":
+        if cleaned_val == "":
+            return default
+        try:
+            return float(cleaned_val)
+        except Exception:
+            logger.warning(f"VALIDATION WARNING: safe_numeric failed to parse string '{value}' (cleaned: '{cleaned_val}'). Falling back to {default}")
             return default
 
     try:
         return float(value)
     except Exception:
+        logger.warning(f"VALIDATION WARNING: safe_numeric failed to parse object of type {type(value)}. Falling back to {default}")
         return default
 
 
@@ -138,33 +148,59 @@ def calculate_percentage_change(current, previous):
 
 
 def total_pipeline(df: pd.DataFrame, value_column: str) -> float:
-    return calculate_sum(df[value_column])
+    if value_column not in df.columns:
+        logger.warning(f"VALIDATION WARNING: Required column '{value_column}' missing from DataFrame for total_pipeline.")
+        return 0.0
+    res = calculate_sum(df[value_column])
+    if not df.empty and res == 0.0:
+        logger.warning(f"VALIDATION WARNING: total_pipeline evaluated to 0.0 on a non-empty DataFrame ({len(df)} rows).")
+    return res
 
 
 def average_deal_size(df: pd.DataFrame, value_column: str) -> float:
-    return calculate_average(df[value_column])
+    if value_column not in df.columns:
+        logger.warning(f"VALIDATION WARNING: Required column '{value_column}' missing from DataFrame for average_deal_size.")
+        return 0.0
+    res = calculate_average(df[value_column])
+    if not df.empty and res == 0.0:
+        logger.warning(f"VALIDATION WARNING: average_deal_size evaluated to 0.0 on a non-empty DataFrame ({len(df)} rows).")
+    return res
 
 
 def largest_deal(df: pd.DataFrame, value_column: str):
-    if df.empty:
+    if df.empty or value_column not in df.columns:
         return None
-    idx = df[value_column].astype(float).idxmax()
-    return df.loc[idx].to_dict()
+    try:
+        idx = df[value_column].astype(float).idxmax()
+        return df.loc[idx].to_dict()
+    except Exception as exc:
+        logger.warning(f"VALIDATION WARNING: failed to compute largest_deal: {exc}")
+        return None
 
 
 def smallest_deal(df: pd.DataFrame, value_column: str):
-    if df.empty:
+    if df.empty or value_column not in df.columns:
         return None
-    idx = df[value_column].astype(float).idxmin()
-    return df.loc[idx].to_dict()
+    try:
+        idx = df[value_column].astype(float).idxmin()
+        return df.loc[idx].to_dict()
+    except Exception as exc:
+        logger.warning(f"VALIDATION WARNING: failed to compute smallest_deal: {exc}")
+        return None
 
 
 def weighted_pipeline(df: pd.DataFrame, value_column: str, probability_column: str) -> float:
     if df.empty:
-        return 0
+        return 0.0
+    if value_column not in df.columns or probability_column not in df.columns:
+        logger.warning(f"VALIDATION WARNING: Missing column '{value_column}' or '{probability_column}' for weighted_pipeline calculation.")
+        return 0.0
     values = df[value_column].apply(safe_numeric)
     probabilities = df[probability_column].apply(safe_numeric).fillna(0) / 100
-    return round((values * probabilities).sum(), 2)
+    res = round((values * probabilities).sum(), 2)
+    if not df.empty and res == 0.0:
+        logger.warning(f"VALIDATION WARNING: weighted_pipeline evaluated to 0.0 on a non-empty DataFrame ({len(df)} rows).")
+    return res
 
 
 # ============================================================
@@ -174,6 +210,9 @@ def weighted_pipeline(df: pd.DataFrame, value_column: str, probability_column: s
 
 def group_sum(df: pd.DataFrame, group_column: str, value_column: str) -> Dict[str, float]:
     if df.empty:
+        return {}
+    if group_column not in df.columns or value_column not in df.columns:
+        logger.warning(f"VALIDATION WARNING: Missing group_column '{group_column}' or value_column '{value_column}' for group_sum.")
         return {}
     grouped = (
         df.groupby(group_column)[value_column]

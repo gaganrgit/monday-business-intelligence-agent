@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from backend.app.logger import get_logger
 from backend.helpers.calculation_helper import (
     calculate_average,
     calculate_sum,
@@ -25,6 +26,8 @@ from backend.helpers.calculation_helper import (
     growth,
     safe_numeric,
 )
+
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +41,9 @@ def _effective_date_col(df: pd.DataFrame, preferred_cols: List[str]) -> Optional
     """Return the first column from preferred_cols that exists in df."""
     for col in preferred_cols:
         if col in df.columns:
+            logger.info(f"Effective date column selected: '{col}' (evaluated candidates: {preferred_cols})")
             return col
+    logger.warning(f"VALIDATION WARNING: No date column found in DataFrame out of candidates {preferred_cols}")
     return None
 
 
@@ -402,54 +407,93 @@ def apply_time_filter(
       6. year + half → half-year filter
       7. year only → full-year filter
     """
+    logger.info("=================== [TIME INTELLIGENCE] ===================")
+    initial_rows = len(df)
+    logger.info(f"Target Column: {date_col} | Initial Row Count: {initial_rows}")
+    logger.info(
+        f"Filter Input Parameters: period={period}, year={year}, month={month}, quarter={quarter}, "
+        f"start_date={start_date}, end_date={end_date}, rolling_days={rolling_days}, "
+        f"rolling_months={rolling_months}, half={half}"
+    )
+
+    if date_col not in df.columns:
+        logger.warning(f"VALIDATION WARNING: Date column '{date_col}' is missing from DataFrame. Skipping time filter.")
+        return df
+
+    filtered_df = df
+    reason = ""
+
     if start_date and end_date:
-        return filter_between_dates(df, date_col, start_date, end_date)
+        reason = f"Explicit date range: {start_date} to {end_date}"
+        filtered_df = filter_between_dates(df, date_col, start_date, end_date)
+    elif rolling_days:
+        reason = f"Rolling days window: last {rolling_days} days"
+        filtered_df = filter_last_n_days(df, date_col, rolling_days)
+    elif rolling_months:
+        reason = f"Rolling months window: last {rolling_months} months"
+        filtered_df = filter_last_n_months(df, date_col, rolling_months)
+    else:
+        named = (period or "").lower().strip()
+        if named == "today":
+            reason = "Named period: today"
+            filtered_df = filter_today(df, date_col)
+        elif named == "yesterday":
+            reason = "Named period: yesterday"
+            filtered_df = filter_yesterday(df, date_col)
+        elif named in ("this_week", "this week"):
+            reason = "Named period: this_week"
+            filtered_df = filter_this_week(df, date_col)
+        elif named in ("last_week", "last week"):
+            reason = "Named period: last_week"
+            filtered_df = filter_last_week(df, date_col)
+        elif named in ("this_month", "this month"):
+            reason = "Named period: this_month"
+            filtered_df = filter_this_month(df, date_col)
+        elif named in ("last_month", "last month"):
+            reason = "Named period: last_month"
+            filtered_df = filter_last_month(df, date_col)
+        elif named in ("this_quarter", "this quarter"):
+            reason = "Named period: this_quarter"
+            filtered_df = filter_this_quarter(df, date_col)
+        elif named in ("last_quarter", "last quarter"):
+            reason = "Named period: last_quarter"
+            filtered_df = filter_last_quarter(df, date_col)
+        elif named in ("this_year", "this year"):
+            reason = "Named period: this_year"
+            filtered_df = filter_this_year(df, date_col)
+        elif named in ("last_year", "last year"):
+            reason = "Named period: last_year"
+            filtered_df = filter_last_year(df, date_col)
+        elif year and quarter:
+            reason = f"Quarter-year filter: Q{quarter} {year}"
+            filtered_df = filter_by_quarter_year(df, date_col, year, quarter)
+        elif year and month:
+            reason = f"Month-year filter: Month {month}, {year}"
+            filtered_df = filter_by_month_year(df, date_col, year, month)
+        elif year and half == 1:
+            reason = f"First half filter: H1 {year}"
+            filtered_df = filter_first_half(df, date_col, year)
+        elif year and half == 2:
+            reason = f"Second half filter: H2 {year}"
+            filtered_df = filter_second_half(df, date_col, year)
+        elif year:
+            reason = f"Full year filter: {year}"
+            filtered_df = filter_by_year(df, date_col, year)
+        else:
+            reason = "No time parameters specified — time filter skipped"
+            filtered_df = df
 
-    if rolling_days:
-        return filter_last_n_days(df, date_col, rolling_days)
+    filtered_rows = len(filtered_df)
+    logger.info(f"Filter Logic Applied: {reason}")
+    logger.info(f"Time Filtering Output: {initial_rows} rows -> {filtered_rows} rows")
 
-    if rolling_months:
-        return filter_last_n_months(df, date_col, rolling_months)
+    if initial_rows > 0 and filtered_rows == 0 and reason != "No time parameters specified — time filter skipped":
+        logger.warning(
+            f"VALIDATION WARNING: Time filter resulted in 0 rows (empty time window) "
+            f"for column '{date_col}' under filter '{reason}'."
+        )
 
-    named = (period or "").lower().strip()
-    if named == "today":
-        return filter_today(df, date_col)
-    if named == "yesterday":
-        return filter_yesterday(df, date_col)
-    if named in ("this_week", "this week"):
-        return filter_this_week(df, date_col)
-    if named in ("last_week", "last week"):
-        return filter_last_week(df, date_col)
-    if named in ("this_month", "this month"):
-        return filter_this_month(df, date_col)
-    if named in ("last_month", "last month"):
-        return filter_last_month(df, date_col)
-    if named in ("this_quarter", "this quarter"):
-        return filter_this_quarter(df, date_col)
-    if named in ("last_quarter", "last quarter"):
-        return filter_last_quarter(df, date_col)
-    if named in ("this_year", "this year"):
-        return filter_this_year(df, date_col)
-    if named in ("last_year", "last year"):
-        return filter_last_year(df, date_col)
-
-    if year and quarter:
-        return filter_by_quarter_year(df, date_col, year, quarter)
-
-    if year and month:
-        return filter_by_month_year(df, date_col, year, month)
-
-    if year and half == 1:
-        return filter_first_half(df, date_col, year)
-
-    if year and half == 2:
-        return filter_second_half(df, date_col, year)
-
-    if year:
-        return filter_by_year(df, date_col, year)
-
-    # No filter applied
-    return df
+    return filtered_df
 
 
 # ---------------------------------------------------------------------------

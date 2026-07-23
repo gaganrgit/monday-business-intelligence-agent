@@ -12,6 +12,8 @@ The service always fetches fresh data on every call. Local CSV
 files are NEVER read once data has been imported into monday.com.
 """
 
+import random
+import time
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -23,6 +25,8 @@ logger = get_logger(__name__)
 
 MONDAY_TIMEOUT_SECONDS = 20
 ITEMS_PAGE_LIMIT = 100
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 2.0  # seconds
 
 
 class MondayServiceError(Exception):
@@ -66,52 +70,68 @@ class MondayService:
 
         logger.info(f"Fetching {board_label} Board...")
 
-        items: List[Dict[str, Any]] = []
-        cursor: Optional[str] = None
-
-        try:
-            column_titles = self._fetch_column_titles(board_id)
-
-            while True:
-                data = self._run_items_page_query(board_id, cursor)
-                boards = data.get("boards") or []
-                if not boards:
-                    raise MondayServiceError(
-                        f"Board {board_id} ({board_label}) was not found or is not "
-                        "accessible with the provided API token."
+        last_exc: Exception = Exception("Unknown error")
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                return self._fetch_board_items_attempt(board_id, board_label)
+            except MondayServiceError:
+                # Non-transient errors (auth, not found, API errors) — don't retry
+                raise
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_exc = exc
+                if attempt < MAX_RETRIES:
+                    wait = RETRY_BACKOFF_BASE ** attempt + random.uniform(0, 1)
+                    logger.warning(
+                        f"Transient network error on attempt {attempt}/{MAX_RETRIES} "
+                        f"for {board_label}: {exc}. Retrying in {wait:.1f}s..."
                     )
+                    time.sleep(wait)
+                else:
+                    logger.error(
+                        f"All {MAX_RETRIES} attempts failed for {board_label}: {exc}"
+                    )
+            except requests.exceptions.RequestException as exc:
+                last_exc = exc
+                logger.error(f"API Failure while fetching {board_label} Board: {exc}")
+                break  # Non-connection request errors — don't retry
 
-                items_page = boards[0].get("items_page") or {}
-                page_items = items_page.get("items") or []
-
-                for raw_item in page_items:
-                    items.append(self._parse_item(raw_item, column_titles))
-
-                cursor = items_page.get("cursor")
-                if not cursor:
-                    break
-
-        except MondayServiceError:
-            logger.error(f"API Failure while fetching {board_label} Board")
-            raise
-        except requests.exceptions.Timeout as exc:
-            logger.error(f"Network Timeout while fetching {board_label} Board")
-            raise MondayServiceError(
-                f"Timed out while contacting monday.com for {board_label}. Please try again."
-            ) from exc
-        except requests.exceptions.RequestException as exc:
-            logger.error(f"API Failure while fetching {board_label} Board: {exc}")
-            raise MondayServiceError(
-                f"Could not reach monday.com while fetching {board_label}."
-            ) from exc
-
-        logger.info(f"Records Retrieved: {len(items)} items from {board_label}")
-        logger.info("API Success")
-        return items
+        raise MondayServiceError(
+            f"Could not reach monday.com while fetching {board_label} after {MAX_RETRIES} attempts."
+        ) from last_exc
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _fetch_board_items_attempt(self, board_id: str, board_label: str) -> List[Dict[str, Any]]:
+        """Single attempt to fetch all items from a board. Raises on any error."""
+        items: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+
+        column_titles = self._fetch_column_titles(board_id)
+
+        while True:
+            data = self._run_items_page_query(board_id, cursor)
+            boards = data.get("boards") or []
+            if not boards:
+                raise MondayServiceError(
+                    f"Board {board_id} ({board_label}) was not found or is not "
+                    "accessible with the provided API token."
+                )
+
+            items_page = boards[0].get("items_page") or {}
+            page_items = items_page.get("items") or []
+
+            for raw_item in page_items:
+                items.append(self._parse_item(raw_item, column_titles))
+
+            cursor = items_page.get("cursor")
+            if not cursor:
+                break
+
+        logger.info(f"Records Retrieved: {len(items)} items from {board_label}")
+        logger.info("API Success")
+        return items
 
     def _headers(self) -> Dict[str, str]:
         return {

@@ -61,7 +61,7 @@ class ParsedQuery:
 INTENT_KEYWORDS = {
     "pipeline": ["pipeline", "open deals", "deal pipeline"],
     "revenue": ["revenue", "expected revenue", "income"],
-    "sector_performance": ["sector performance", "best sector", "which sector", "by sector"],
+    "sector_performance": ["sector performance", "best sector", "which sector", "by sector", "top sector", "sector breakdown", "sector"],
     "deals_by_stage": ["stage", "deal stage", "by stage"],
     "upcoming_closures": ["upcoming closure", "closing soon", "expected to close", "close date"],
     "delayed_work_orders": ["delayed", "delay", "overdue", "late work order"],
@@ -69,7 +69,7 @@ INTENT_KEYWORDS = {
     "billing_summary": ["billing", "invoice summary", "invoices"],
     "pending_receivables": ["receivable", "pending payment", "outstanding amount", "unpaid"],
     "collection_summary": ["collection", "collected", "collections"],
-    "customer_lookup": ["customer", "client", "which customers", "account"],
+    "customer_lookup": ["customer", "client", "which customers", "account", "active deals and delayed", "cross-board", "cross board"],
     "leadership_update": ["leadership update", "leadership summary", "executive summary"],
     "time_intelligence": [
         "this month", "last month", "this quarter", "last quarter",
@@ -208,7 +208,7 @@ def parse_query(message: str) -> ParsedQuery:
     parsed.sector = _detect_sector(message)
     parsed.quarter = _detect_quarter(text_lower)
     parsed.month = _detect_month(text_lower)
-    parsed.year = _detect_year(text_lower) or date.today().year
+    parsed.year = _detect_year(text_lower)   # None unless user explicitly states a year
 
     if "open" in text_lower:
         parsed.only_open = True

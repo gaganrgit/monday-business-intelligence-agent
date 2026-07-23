@@ -79,7 +79,8 @@ def generate_leadership_report_markdown(
         + "\n\nUnder each heading write 2-5 concise sentences or bullet points. "
         "Under 'Data Quality Notes', explicitly mention the missing_values, "
         "invalid_dates, and skipped_records counts from the data_quality section, "
-        "and note if data quality is poor."
+        "and note if data quality is poor. "
+        "Always use the Indian Rupee symbol (₹) for monetary values. Do NOT use € or $."
     )
 
     try:

@@ -92,6 +92,28 @@ def safe_float(value: Any) -> float:
         return 0.0
 
 
+PROBABILITY_TEXT_MAP = {
+    "high": 80.0,
+    "medium": 50.0,
+    "low": 25.0,
+    "very high": 90.0,
+    "very low": 10.0,
+}
+
+
+def safe_probability(value: Any) -> float:
+    """Convert categorical probability rating ('High', 'Medium', 'Low') or percentage to float (0.0-100.0)."""
+    if value is None:
+        return 0.0
+    text = str(value).strip().lower()
+    if text in PROBABILITY_TEXT_MAP:
+        return PROBABILITY_TEXT_MAP[text]
+    num = safe_float(value)
+    if 0.0 < num <= 1.0:
+        return num * 100.0
+    return num
+
+
 def safe_date(value: Any):
     """Parse a date string in (almost) any common format.
 
@@ -117,7 +139,11 @@ def clean_deals(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Dict[str
 
     Returns (dataframe, quality_report).
     """
-    logger.info("Cleaning Started")
+    logger.info("=================== [DATA CLEANING: DEALS] ===================")
+    logger.info(f"Raw Items Received: {len(raw_items)}")
+    if not raw_items:
+        logger.warning("VALIDATION WARNING: Received empty raw_items list for Deals board.")
+
     alias_lookup = _build_alias_lookup(DEALS_FIELD_ALIASES)
 
     rows = []
@@ -143,13 +169,17 @@ def clean_deals(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Dict[str
                 raw_val = mapped.get(field)
                 if raw_val in (None, ""):
                     missing_values_count += 1
-                row[field] = safe_float(raw_val)
+                if field == "closure_probability":
+                    row[field] = safe_probability(raw_val)
+                else:
+                    row[field] = safe_float(raw_val)
 
             for field in DEALS_DATE_FIELDS:
                 raw_val = mapped.get(field)
                 parsed = safe_date(raw_val)
                 if raw_val not in (None, "") and parsed is None:
                     invalid_dates_count += 1
+                    logger.warning(f"Field-level date parsing failure for '{field}': raw value = '{raw_val}'")
                 row[field] = parsed
 
             rows.append(row)
@@ -158,7 +188,9 @@ def clean_deals(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Dict[str
             logger.warning(f"Skipped malformed Deals record: {exc}")
 
     df = pd.DataFrame(rows)
-    logger.info("Dates Normalized")
+
+    if len(raw_items) > 0 and df.empty:
+        logger.error(f"VALIDATION ERROR: Received {len(raw_items)} raw deal items, but cleaned DataFrame is EMPTY (0 rows).")
 
     quality_report = {
         "total_records": len(raw_items),
@@ -169,16 +201,20 @@ def clean_deals(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Dict[str
     }
     if missing_values_count or invalid_dates_count or skipped_records:
         logger.warning(
-            f"Missing Values Found: {missing_values_count} | "
-            f"Invalid Dates: {invalid_dates_count} | Skipped: {skipped_records}"
+            f"Data Quality Anomalies: Missing Values = {missing_values_count} | "
+            f"Invalid Dates = {invalid_dates_count} | Skipped Records = {skipped_records}"
         )
-    logger.info("Cleaning Finished")
+    logger.info(f"Deals Data Cleaning Completed: Shape = {df.shape} | Clean Records = {len(df)}")
     return df, quality_report
 
 
 def clean_work_orders(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     """Clean raw Work Orders board items into a normalized DataFrame."""
-    logger.info("Cleaning Started")
+    logger.info("=================== [DATA CLEANING: WORK ORDERS] ===================")
+    logger.info(f"Raw Items Received: {len(raw_items)}")
+    if not raw_items:
+        logger.warning("VALIDATION WARNING: Received empty raw_items list for Work Orders board.")
+
     alias_lookup = _build_alias_lookup(WORKORDERS_FIELD_ALIASES)
 
     rows = []
@@ -213,6 +249,7 @@ def clean_work_orders(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Di
                 parsed = safe_date(raw_val)
                 if raw_val not in (None, "") and parsed is None:
                     invalid_dates_count += 1
+                    logger.warning(f"Field-level date parsing failure for '{field}': raw value = '{raw_val}'")
                 row[field] = parsed
 
             rows.append(row)
@@ -221,7 +258,9 @@ def clean_work_orders(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Di
             logger.warning(f"Skipped malformed Work Order record: {exc}")
 
     df = pd.DataFrame(rows)
-    logger.info("Dates Normalized")
+
+    if len(raw_items) > 0 and df.empty:
+        logger.error(f"VALIDATION ERROR: Received {len(raw_items)} raw work order items, but cleaned DataFrame is EMPTY (0 rows).")
 
     quality_report = {
         "total_records": len(raw_items),
@@ -232,8 +271,8 @@ def clean_work_orders(raw_items: List[Dict[str, Any]]) -> Tuple[pd.DataFrame, Di
     }
     if missing_values_count or invalid_dates_count or skipped_records:
         logger.warning(
-            f"Missing Values Found: {missing_values_count} | "
-            f"Invalid Dates: {invalid_dates_count} | Skipped: {skipped_records}"
+            f"Data Quality Anomalies: Missing Values = {missing_values_count} | "
+            f"Invalid Dates = {invalid_dates_count} | Skipped Records = {skipped_records}"
         )
-    logger.info("Cleaning Finished")
+    logger.info(f"Work Orders Data Cleaning Completed: Shape = {df.shape} | Clean Records = {len(df)}")
     return df, quality_report

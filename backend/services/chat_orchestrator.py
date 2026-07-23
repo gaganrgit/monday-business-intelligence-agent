@@ -48,27 +48,59 @@ class ChatOrchestrator:
 
     def handle_message(self, message: str) -> str:
         start_time = time.time()
+        logger.info("=================== [CHAT ORCHESTRATOR] ===================")
         logger.info(f"Incoming Question: {message}")
 
         parsed = parse_query(message)
-        logger.info(f"Detected Intent: {parsed.intents}")
+        logger.info(f"Detected Intent(s): {parsed.intents}")
+        logger.info(
+            f"Parsed Time Specs: period='{parsed.period}', year={parsed.year}, month={parsed.month}, "
+            f"quarter={parsed.quarter}, start_date={parsed.start_date}, end_date={parsed.end_date}, "
+            f"rolling_days={parsed.rolling_days}, rolling_months={parsed.rolling_months}, half={parsed.half}"
+        )
+        if parsed.sector:
+            logger.info(f"Parsed Sector Filter: '{parsed.sector}'")
+
+        # Validation log: check if time filter params exist without time_intelligence intent
+        has_time_params = any([
+            parsed.period, parsed.year, parsed.month, parsed.quarter,
+            parsed.start_date, parsed.end_date, parsed.rolling_days,
+            parsed.rolling_months, parsed.half,
+        ])
+        if has_time_params and "time_intelligence" not in parsed.intents:
+            logger.warning(
+                f"VALIDATION WARNING: Time parameters detected ({parsed.period or parsed.year or parsed.start_date}) "
+                f"but 'time_intelligence' was missing from detected intents {parsed.intents}."
+            )
+        elif not has_time_params and "time_intelligence" in parsed.intents:
+            logger.warning(
+                f"VALIDATION WARNING: 'time_intelligence' intent detected, but no explicit time parameters "
+                f"were extracted from the query."
+            )
 
         if parsed.needs_clarification:
+            logger.info(f"Clarification Required: {parsed.clarification_question}")
             logger.info(f"Execution Time: {round(time.time() - start_time, 2)}s")
             return parsed.clarification_question
 
         try:
             deals_df, wo_df, deals_quality, wo_quality = self._load_clean_data()
+            logger.info(f"Loaded Clean Data: Deals = {deals_df.shape}, Work Orders = {wo_df.shape}")
         except MondayServiceError as exc:
-            logger.error(f"Monday.com integration failure: {exc}")
+            logger.error(f"VALIDATION ERROR: Monday.com integration failure: {exc}")
             return f"I couldn't retrieve live data from monday.com right now. {exc}"
 
         # ------------------------------------------------------------------
-        # Sector filter (unchanged — applied before evidence builder)
+        # Sector filter (applied before evidence builder)
         # ------------------------------------------------------------------
         if parsed.sector:
+            deals_before, wo_before = len(deals_df), len(wo_df)
             deals_df = ae.filter_by_sector(deals_df, parsed.sector)
             wo_df = ae.filter_by_sector(wo_df, parsed.sector)
+            logger.info(
+                f"Sector Filter '{parsed.sector}' Applied: "
+                f"Deals {deals_before} -> {len(deals_df)} | Work Orders {wo_before} -> {len(wo_df)}"
+            )
 
         # ------------------------------------------------------------------
         # Determine which KPI domains are needed for this query
@@ -99,6 +131,11 @@ class ChatOrchestrator:
             include_pipeline = True
             include_revenue = True
 
+        logger.info(
+            f"Determined Domain Scope: Pipeline={include_pipeline}, "
+            f"Revenue={include_revenue}, WorkOrders={include_workorders}"
+        )
+
         # ------------------------------------------------------------------
         # Business Computation Layer
         # All arithmetic, aggregation, KPI computation, and date/time
@@ -108,6 +145,8 @@ class ChatOrchestrator:
         evidence = build_evidence(
             deals_df,
             wo_df,
+            # Dual-gate: only filter when 'time_intelligence' was explicitly detected
+            has_time_intent="time_intelligence" in parsed.intents,
             # Time-intelligence parameters extracted by query parser
             period=parsed.period,
             year=parsed.year,
@@ -132,7 +171,7 @@ class ChatOrchestrator:
             include_quality=True,
         )
         logger.info(
-            f"Evidence Built: {len(evidence['facts'])} facts | "
+            f"Evidence Built Successfully: {len(evidence['facts'])} facts | "
             f"{len(evidence['warnings'])} warnings | "
             f"{len(evidence['recommendations'])} recommendations"
         )
@@ -150,8 +189,8 @@ class ChatOrchestrator:
             logger.error(f"Fireworks Error: {exc}")
             answer = self._fallback_answer(evidence)
 
-        logger.info("Response Generated")
-        logger.info(f"Execution Time: {round(time.time() - start_time, 2)}s")
+        logger.info("Chat Orchestrator Execution Finished Successfully")
+        logger.info(f"Total Execution Time: {round(time.time() - start_time, 2)}s")
         return answer
 
     @staticmethod

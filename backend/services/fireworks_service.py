@@ -43,7 +43,9 @@ SYSTEM_PROMPT = (
     "chain of thought, step-by-step analysis, or how you parsed the JSON. "
     "Do not use phrases like 'We are asked', 'Let's parse', 'I need to', 'Based on the JSON'. "
     "Begin immediately with the insight itself. Keep the response under 250 words unless "
-    "the question explicitly requests a detailed report."
+    "the question explicitly requests a detailed report.\n"
+    "9. CURRENCY FORMATTING RULE: Always preserve the exact currency symbol provided in the evidence "
+    "package (e.g., ₹ for Indian Rupee). NEVER replace '₹' with '€', '$', or any other currency symbol."
 )
 
 # Strip reasoning tags that some models emit even when instructed not to.
@@ -87,7 +89,9 @@ class FireworksService:
         ``evidence`` must be the structured dict produced by evidence_builder.build_evidence().
         The LLM sees ONLY this evidence — never raw DataFrames or analytics dicts.
         """
+        logger.info("=================== [FIREWORKS SERVICE] ===================")
         if not self.api_key:
+            logger.error("VALIDATION ERROR: Fireworks API key is not configured. Please set FIREWORKS_API_KEY.")
             raise FireworksServiceError(
                 "Fireworks API key is not configured. Please set FIREWORKS_API_KEY."
             )
@@ -95,11 +99,19 @@ class FireworksService:
         # If evidence is empty but analytics_summary was passed (e.g., from
         # report_generator.py which has its own evidence path), fall back gracefully.
         payload_data = evidence if evidence else (analytics_summary or {})
+        serialized_evidence = json.dumps(payload_data, default=str)
+
+        logger.info(f"Target Model: {self.model}")
+        logger.info(
+            f"Evidence Payload Size: {len(serialized_evidence)} bytes | "
+            f"Facts = {len(payload_data.get('facts', []))}, Warnings = {len(payload_data.get('warnings', []))}, "
+            f"Recommendations = {len(payload_data.get('recommendations', []))}"
+        )
 
         user_content = (
             f"Founder's question:\n{question}\n\n"
             f"Evidence package (verified, Python-computed):\n"
-            f"{json.dumps(payload_data, default=str)}\n\n"
+            f"{serialized_evidence}\n\n"
         )
         if extra_instructions:
             user_content += extra_instructions
@@ -118,23 +130,23 @@ class FireworksService:
             "Content-Type": "application/json",
         }
 
-        logger.info("Sending Evidence to Fireworks...")
+        logger.info(f"Sending Request to Fireworks API endpoint ({FIREWORKS_URL})")
         try:
             response = requests.post(
                 FIREWORKS_URL, json=payload, headers=headers, timeout=FIREWORKS_TIMEOUT_SECONDS
             )
         except requests.exceptions.Timeout as exc:
-            logger.error("Fireworks Error: request timed out")
+            logger.error("VALIDATION ERROR: Fireworks request timed out after 30 seconds.")
             raise FireworksServiceError("The AI service timed out. Please try again.") from exc
         except requests.exceptions.RequestException as exc:
-            logger.error(f"Fireworks Error: {exc}")
+            logger.error(f"VALIDATION ERROR: Failed to connect to Fireworks API: {exc}")
             raise FireworksServiceError("Could not reach the AI service. Please try again.") from exc
 
         if response.status_code == 401:
-            logger.error("Fireworks Error: unauthorized")
+            logger.error("VALIDATION ERROR: Fireworks API 401 Unauthorized - Key rejected.")
             raise FireworksServiceError("Fireworks API key was rejected. Please verify FIREWORKS_API_KEY.")
         if response.status_code >= 400:
-            logger.error(f"Fireworks Error: status {response.status_code}")
+            logger.error(f"VALIDATION ERROR: Fireworks API returned HTTP Status {response.status_code}")
             raise FireworksServiceError("The AI service returned an error. Please try again.")
 
         try:
@@ -144,13 +156,17 @@ class FireworksService:
             # and the clean answer in "content" -- we only ever use "content".
             answer = (message.get("content") or "").strip()
         except (KeyError, IndexError, ValueError) as exc:
-            logger.error(f"Fireworks Error: unexpected response shape ({exc})")
+            logger.error(f"VALIDATION ERROR: Unexpected Fireworks API response format ({exc})")
             raise FireworksServiceError("Received an unexpected response from the AI service.") from exc
 
         answer = _strip_reasoning_artifacts(answer)
+        if "€" in answer:
+            logger.warning("Post-processing: LLM hallucinated Euro symbol (€). Replacing with Rupee (₹).")
+            answer = answer.replace("€", "₹")
+
         if not answer:
-            logger.error("Fireworks Error: response was empty after removing reasoning content")
+            logger.error("VALIDATION ERROR: Model output was empty after stripping reasoning tags.")
             raise FireworksServiceError("The AI service returned an empty response. Please try again.")
 
-        logger.info("Fireworks Response Received")
+        logger.info(f"Fireworks Insight Received Successfully: Answer Length = {len(answer)} characters")
         return answer

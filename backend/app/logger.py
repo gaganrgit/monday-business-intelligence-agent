@@ -15,6 +15,12 @@ def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
 
     if not logger.handlers:
+        if hasattr(sys.stdout, "reconfigure"):
+            try:
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
         handler = logging.StreamHandler(sys.stdout)
         formatter = logging.Formatter(
             fmt="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",

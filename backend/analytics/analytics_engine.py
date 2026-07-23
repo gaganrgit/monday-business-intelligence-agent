@@ -237,30 +237,64 @@ def collection_summary(wo_df: pd.DataFrame) -> List[Dict[str, Any]]:
 # Cross-board analytics
 # ----------------------------------------------------------------------
 
+def normalize_customer_code(code: str) -> str:
+    """Normalize customer code across Deals (e.g. COMPANY089) and Work Orders (e.g. WOCOMPANY_089)."""
+    if not code:
+        return ""
+    import re
+    c = str(code).upper().strip()
+    c = re.sub(r"[\s_]", "", c)
+    if c.startswith("WO"):
+        c = c[2:]
+    return c
+
+
 def cross_board_customer_lookup(deals_df: pd.DataFrame, wo_df: pd.DataFrame) -> List[Dict[str, Any]]:
     """Find customers who have both an active deal AND a delayed work order."""
     if deals_df.empty or wo_df.empty:
         return []
 
-    active_deals = deals_df[deals_df["deal_status"].isin(OPEN_DEAL_STATUSES)] if "deal_status" in deals_df.columns else deals_df
-    active_customers = set(active_deals["client_code"].dropna()) if "client_code" in active_deals.columns else set()
+    # Active deals = deals not in closed status set
+    if "deal_status" in deals_df.columns:
+        active_deals = deals_df[~deals_df["deal_status"].isin(CLOSED_DEAL_STATUSES)].copy()
+    else:
+        active_deals = deals_df.copy()
+
+    if "client_code" not in active_deals.columns:
+        return []
+
+    active_deals["_norm_cust"] = active_deals["client_code"].apply(normalize_customer_code)
 
     delayed = delayed_work_orders(wo_df)
-    delayed_customers = {d["customer_code"] for d in delayed if d.get("customer_code")}
+    delayed_norm_map: Dict[str, List[Dict]] = {}
+    for item in delayed:
+        cust = item.get("customer_code", "")
+        norm = normalize_customer_code(cust)
+        if norm:
+            delayed_norm_map.setdefault(norm, []).append(item)
 
-    overlap = active_customers.intersection(delayed_customers)
+    active_cust_map: Dict[str, pd.DataFrame] = {}
+    for norm, group in active_deals.groupby("_norm_cust"):
+        if norm:
+            active_cust_map[norm] = group
+
+    overlap = set(active_cust_map.keys()).intersection(set(delayed_norm_map.keys()))
     results = []
-    for customer in overlap:
-        if not customer:
-            continue
-        customer_deals = active_deals[active_deals["client_code"] == customer]
-        customer_delays = [d for d in delayed if d.get("customer_code") == customer]
+    for norm in sorted(overlap):
+        cust_deals = active_cust_map[norm]
+        cust_delays = delayed_norm_map[norm]
+        display_code = cust_deals["client_code"].iloc[0] if not cust_deals.empty else norm
+        deal_val = float(cust_deals["deal_value"].sum()) if "deal_value" in cust_deals.columns else 0.0
         results.append({
-            "customer_code": customer,
-            "active_deal_count": int(len(customer_deals)),
-            "active_deal_value": round(float(customer_deals["deal_value"].sum()), 2),
-            "delayed_work_order_count": len(customer_delays),
+            "customer_code": display_code,
+            "normalized_code": norm,
+            "active_deal_count": int(len(cust_deals)),
+            "active_deal_value": round(deal_val, 2),
+            "delayed_work_order_count": len(cust_delays),
         })
+
+    # Sort by active deal value descending
+    results.sort(key=lambda x: x["active_deal_value"], reverse=True)
     return results
 
 
