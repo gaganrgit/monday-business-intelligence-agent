@@ -74,20 +74,26 @@ With additional time, I would introduce a short-lived (60–300 second) TTL cach
 
 ---
 
-### Single-service deployment
+### Process-orchestrated single-container deployment
 
-The prototype runs FastAPI and Streamlit together using a single Render Web Service and a shared startup script.
+The application packages FastAPI and Streamlit into a single co-located service managed by a hardened process supervisor (`start.sh`).
+
+**Modernized Orchestration Improvements**
+
+- **Health-checked startup order**: Replaced arbitrary `sleep` delays with active HTTP health check polling against `http://127.0.0.1:${BACKEND_INTERNAL_PORT}/health` before launching the Streamlit interface.
+- **POSIX Signal Trapping**: Traps `SIGTERM` and `SIGINT` to gracefully terminate both Uvicorn and Streamlit child processes on container stop/restart signals.
+- **Port Isolation**: Strict variable separation (`PORT` for external Streamlit routing, `BACKEND_INTERNAL_PORT` for loopback Uvicorn binding) to ensure zero port collision across deployment hosts.
+- **Platform Containerization**: Added production multi-stage `Dockerfile`, `docker-compose.yml`, and `Procfile` to support Render, Railway, Cloud Run, and Docker targets seamlessly.
 
 **Advantages**
 
-- simpler deployment
-- minimal infrastructure
-- avoids CORS configuration
-- suitable for Render free tier
+- Zero-CORS overhead since Streamlit communicates over local IPC/loopback.
+- Single container memory footprint.
+- Portable across Render Blueprints, Docker, Railway, and GCP Cloud Run.
 
 **Trade-off**
 
-Frontend and backend cannot scale independently.
+Frontend and backend scale as a single unit rather than independently.
 
 ---
 

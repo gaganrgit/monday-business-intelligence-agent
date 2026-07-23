@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  monday-bi-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: monday-bi-agent
+    ports:
+      - "${PORT:-8501}:8501"
+    env_file:
+      - .env
+    environment:
+      - PORT=${PORT:-8501}
+      - BACKEND_INTERNAL_PORT=${BACKEND_INTERNAL_PORT:-8000}
+    restart: unless-stopped

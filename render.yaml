@@ -5,6 +5,7 @@ services:
     plan: starter
     buildCommand: "pip install -r requirements.txt"
     startCommand: "bash start.sh"
+    healthCheckPath: /
     envVars:
       - key: MONDAY_API_TOKEN
         sync: false
@@ -20,4 +21,5 @@ services:
         value: INFO
       - key: PYTHON_VERSION
         value: 3.11.9
-    healthCheckPath: /
+      - key: BACKEND_INTERNAL_PORT
+        value: "8000"

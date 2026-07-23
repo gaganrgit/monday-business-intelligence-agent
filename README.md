@@ -150,39 +150,96 @@ are **never** sent to the Streamlit frontend or exposed in API responses.
 
 ## 8. Running Locally
 
-Run the backend and frontend in two terminals:
+### Option A: Standard Dual Terminal (Development)
+
+Run the backend and frontend in separate terminals for live reloading:
 
 ```bash
-# Terminal 1 — backend
+# Terminal 1 — FastAPI Backend
 uvicorn backend.main:app --reload --port 8000
 
-# Terminal 2 — frontend
-BACKEND_URL=http://localhost:8000 streamlit run frontend/streamlit_app.py
+# Terminal 2 — Streamlit Frontend
+BACKEND_URL=http://localhost:8000 streamlit run frontend/streamlit_app.py --server.port 8501
 ```
 
-Or run both together the same way Render does:
+### Option B: Unified Startup Script (Production-Simulated)
+
+Run both processes together via the hardened startup script:
 
 ```bash
 bash start.sh
 ```
 
-Then open the Streamlit URL printed in the terminal (typically
-`http://localhost:8501`).
+Then open the Streamlit URL in your browser (`http://localhost:8501`).
 
-## 9. Deployment on Render
+## 9. Deployment Instructions
+
+### Deployment Option 1: Render (Blueprint Deployment)
 
 1. Push this repository to GitHub.
-2. In Render, choose **New → Blueprint** and point it at the repo (it will
-   detect `render.yaml`), or create a single **Web Service** manually with:
-   - Build command: `pip install -r requirements.txt`
-   - Start command: `bash start.sh`
-3. Add the required environment variables in the Render dashboard:
-   `MONDAY_API_TOKEN`, `DEALS_BOARD_ID`, `WORKORDERS_BOARD_ID`,
-   `FIREWORKS_API_KEY`.
-4. Deploy. Render routes external traffic to `$PORT`, which `start.sh`
-   assigns to the Streamlit process; FastAPI runs internally on port 8000
-   and is only reached by Streamlit over `localhost`, so there's no CORS
-   configuration to manage in production.
+2. In Render, select **New → Blueprint** and select your repository (`render.yaml` will be auto-detected).
+3. Populate the required environment variables in the Render Dashboard:
+   - `MONDAY_API_TOKEN`
+   - `DEALS_BOARD_ID`
+   - `WORKORDERS_BOARD_ID`
+   - `FIREWORKS_API_KEY`
+4. Deploy. Render routes external web traffic to `$PORT` (assigned to Streamlit), while FastAPI runs on internal port `$BACKEND_INTERNAL_PORT` (default `8000`).
+
+### Deployment Option 2: Docker & Docker Compose
+
+#### Using Docker Compose:
+```bash
+# Build and run container using local .env configuration
+docker compose up --build -d
+
+# View container logs
+docker compose logs -f
+```
+
+#### Using Docker CLI:
+```bash
+# Build container image
+docker build -t monday-bi-agent .
+
+# Run container passing environment variables
+docker run -d \
+  -p 8501:8501 \
+  --env-file .env \
+  --name monday-bi-agent \
+  monday-bi-agent
+```
+
+### Deployment Option 3: Railway
+
+1. Connect your GitHub repository to Railway.
+2. Railway detects the `Procfile` (`web: bash start.sh`) or `Dockerfile` automatically.
+3. In Railway **Variables**, set the required environment secrets (`MONDAY_API_TOKEN`, `DEALS_BOARD_ID`, `WORKORDERS_BOARD_ID`, `FIREWORKS_API_KEY`).
+4. Set `PORT` variable (Railway auto-binds `$PORT`).
+
+### Deployment Option 4: GCP Cloud Run / Container Platforms
+
+1. Build and push image to Google Artifact Registry:
+   ```bash
+   gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/monday-bi-agent:latest
+   ```
+2. Deploy image to Cloud Run:
+   ```bash
+   gcloud run deploy monday-bi-agent \
+     --image gcr.io/YOUR_PROJECT_ID/monday-bi-agent:latest \
+     --port 8501 \
+     --set-env-vars MONDAY_API_TOKEN=xxx,DEALS_BOARD_ID=xxx,WORKORDERS_BOARD_ID=xxx,FIREWORKS_API_KEY=xxx \
+     --allow-unauthenticated
+   ```
+
+### Troubleshooting & Health-Check Verification
+
+- **FastAPI Health Verification**:
+  Query backend directly: `curl http://localhost:8000/health`
+  Expected response: `{"status":"ok","monday_configured":true,"fireworks_configured":true}`
+- **Streamlit Health Verification**:
+  Query frontend health endpoint: `curl http://localhost:8501/_stcore/health`
+- **Signal Handling & Process Shutdown**:
+  The `start.sh` process manager traps `SIGTERM` and `SIGINT` signals, ensuring both backend and frontend sub-processes shut down gracefully without dangling ports.
 
 ## 10. API Endpoints
 
