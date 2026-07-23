@@ -17,7 +17,7 @@ DEALS_FIELD_ALIASES = {
     "client_code": ["client code", "client", "customer code", "customer"],
     "deal_status": ["deal status", "status"],
     "deal_stage": ["deal stage", "stage"],
-    "deal_value": ["deal value", "value", "amount"],
+    "deal_value": ["deal value", "value", "amount", "masked deal value", "deal amount", "contract value", "deal size", "opportunity value"],
     "closure_probability": ["closure probability", "probability", "close probability"],
     "close_date": ["close date", "closed date"],
     "tentative_close_date": ["tentative close date", "expected close date", "tentative close"],

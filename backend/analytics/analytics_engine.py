@@ -19,8 +19,20 @@ from backend.app.logger import get_logger
 
 logger = get_logger(__name__)
 
-OPEN_DEAL_STATUSES = {"Open", "In Progress", "Active", "Pending"}
-CLOSED_WON_STATUSES = {"Won", "Closed Won", "Closed"}
+# Statuses that are definitively closed (case-insensitive match after normalize_text).
+# Open pipeline = everything that is NOT in this exclusion set.
+# Override via the CLOSED_DEAL_STATUSES env var (comma-separated).
+import os as _os
+
+_env_closed = _os.getenv("CLOSED_DEAL_STATUSES", "")
+if _env_closed.strip():
+    CLOSED_DEAL_STATUSES: set = {s.strip().title() for s in _env_closed.split(",") if s.strip()}
+else:
+    CLOSED_DEAL_STATUSES = {
+        "Won", "Closed Won", "Closed", "Lost", "Closed Lost",
+        "Dead", "Rejected", "Cancelled", "Canceled",
+    }
+
 DELAYED_STATUSES = {"Delayed", "Overdue", "Late"}
 
 
@@ -34,7 +46,9 @@ def total_pipeline_value(deals_df: pd.DataFrame, only_open: bool = True) -> Dict
 
     df = deals_df
     if only_open and "deal_status" in df.columns:
-        df = df[df["deal_status"].isin(OPEN_DEAL_STATUSES) | (df["deal_status"] == "")]
+        # Exclusion approach: open = anything that is NOT a known closed/lost status.
+        # This is more robust than a whitelist because it works across custom board setups.
+        df = df[~df["deal_status"].isin(CLOSED_DEAL_STATUSES)]
 
     total = float(df["deal_value"].sum()) if "deal_value" in df.columns else 0.0
     return {
@@ -255,3 +269,34 @@ def filter_by_sector(df: pd.DataFrame, sector: str) -> pd.DataFrame:
     if df.empty or "sector" not in df.columns or not sector:
         return df
     return df[df["sector"].str.lower() == sector.lower()]
+
+
+def filter_by_quarter(deals_df: pd.DataFrame, quarter: int, year: int) -> pd.DataFrame:
+    """Filter deals to those whose effective close date falls in the given quarter/year.
+
+    Uses the first available date column: close_date → tentative_close_date → created_date.
+    Returns the original DataFrame unmodified if no date columns are available.
+    """
+    if deals_df.empty or quarter not in (1, 2, 3, 4):
+        return deals_df
+
+    q_start_month = (quarter - 1) * 3 + 1
+    q_end_month = q_start_month + 2
+    q_start = date(year, q_start_month, 1)
+    import calendar as _cal
+    q_end = date(year, q_end_month, _cal.monthrange(year, q_end_month)[1])
+
+    df = deals_df.copy()
+
+    # Build effective date: first non-null of close_date, tentative_close_date, created_date
+    date_cols = [c for c in ("close_date", "tentative_close_date", "created_date") if c in df.columns]
+    if not date_cols:
+        return deals_df
+
+    df["_eff_date"] = None
+    for col in date_cols:
+        df["_eff_date"] = df["_eff_date"].where(df["_eff_date"].notna(), df[col])
+
+    mask = df["_eff_date"].notna() & (df["_eff_date"] >= q_start) & (df["_eff_date"] <= q_end)
+    filtered = deals_df[mask.values]
+    return filtered if not filtered.empty else deals_df  # fall back to all data if nothing in range

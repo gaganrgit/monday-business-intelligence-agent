@@ -6,9 +6,10 @@ Coordinates the full request pipeline for a single /chat call:
   1. Fetch fresh data from monday.com (MondayService)
   2. Clean it (utils.data_cleaning)
   3. Understand the question (utils.query_understanding)
-  4. Run the relevant analytics functions (analytics.analytics_engine)
-  5. Summarize + send to Fireworks AI (services.fireworks_service)
-  6. Return a founder-friendly answer
+  4. Run sector / date filters (analytics.analytics_engine helpers)
+  5. Run the Business Computation Layer (helpers.evidence_builder)
+  6. Send structured evidence to Fireworks AI (services.fireworks_service)
+  7. Return a founder-friendly answer
 
 Kept intentionally simple and linear -- no agent frameworks, no
 multi-step planning loops.
@@ -19,6 +20,7 @@ from typing import Any, Dict
 
 from backend.analytics import analytics_engine as ae
 from backend.app.logger import get_logger
+from backend.helpers.evidence_builder import build_evidence
 from backend.services.fireworks_service import FireworksService, FireworksServiceError
 from backend.services.monday_service import MondayService, MondayServiceError
 from backend.utils.data_cleaning import clean_deals, clean_work_orders
@@ -61,86 +63,105 @@ class ChatOrchestrator:
             logger.error(f"Monday.com integration failure: {exc}")
             return f"I couldn't retrieve live data from monday.com right now. {exc}"
 
+        # ------------------------------------------------------------------
+        # Sector filter (unchanged — applied before evidence builder)
+        # ------------------------------------------------------------------
         if parsed.sector:
             deals_df = ae.filter_by_sector(deals_df, parsed.sector)
             wo_df = ae.filter_by_sector(wo_df, parsed.sector)
 
-        summary = self._build_summary_for_intents(parsed, deals_df, wo_df)
-        summary["data_quality"] = {"deals": deals_quality, "work_orders": wo_quality}
-        summary["filters_applied"] = {
-            "sector": parsed.sector,
-            "quarter": parsed.quarter,
-            "only_open": parsed.only_open,
-        }
-
-        poor_quality = (
-            deals_quality.get("skipped_records", 0) > 0
-            or wo_quality.get("skipped_records", 0) > 0
-            or deals_quality.get("invalid_dates", 0) > 3
-            or wo_quality.get("invalid_dates", 0) > 3
+        # ------------------------------------------------------------------
+        # Determine which KPI domains are needed for this query
+        # ------------------------------------------------------------------
+        intents = set(parsed.intents)
+        include_pipeline = bool(
+            intents & {
+                "pipeline", "revenue", "sector_performance", "deals_by_stage",
+                "upcoming_closures", "customer_lookup", "leadership_update",
+                "time_intelligence",
+            }
         )
-        extra_instructions = (
-            "Note: some records had data quality issues and were skipped or had "
-            "invalid dates -- mention this briefly to the founder."
-            if poor_quality
-            else ""
+        include_revenue = bool(
+            intents & {
+                "revenue", "sector_performance", "customer_lookup",
+                "leadership_update", "time_intelligence",
+            }
+        )
+        include_workorders = bool(
+            intents & {
+                "delayed_work_orders", "execution_summary", "billing_summary",
+                "pending_receivables", "collection_summary", "customer_lookup",
+                "leadership_update",
+            }
+        )
+        # Always include at least pipeline + revenue for generic questions
+        if not include_pipeline and not include_revenue and not include_workorders:
+            include_pipeline = True
+            include_revenue = True
+
+        # ------------------------------------------------------------------
+        # Business Computation Layer
+        # All arithmetic, aggregation, KPI computation, and date/time
+        # reasoning happens here — the LLM never touches numbers.
+        # ------------------------------------------------------------------
+        logger.info("Building Evidence Package via Business Computation Layer...")
+        evidence = build_evidence(
+            deals_df,
+            wo_df,
+            # Time-intelligence parameters extracted by query parser
+            period=parsed.period,
+            year=parsed.year,
+            month=parsed.month,
+            quarter=parsed.quarter,
+            start_date=parsed.start_date,
+            end_date=parsed.end_date,
+            rolling_days=parsed.rolling_days,
+            rolling_months=parsed.rolling_months,
+            half=parsed.half,
+            # Trend flags
+            trend_mom=parsed.trend_mom,
+            trend_qoq=parsed.trend_qoq,
+            trend_yoy=parsed.trend_yoy,
+            trend_avg_monthly=parsed.trend_avg_monthly,
+            trend_avg_quarterly=parsed.trend_avg_quarterly,
+            trend_avg_yearly=parsed.trend_avg_yearly,
+            # Scope
+            include_pipeline=include_pipeline,
+            include_revenue=include_revenue,
+            include_workorders=include_workorders,
+            include_quality=True,
+        )
+        logger.info(
+            f"Evidence Built: {len(evidence['facts'])} facts | "
+            f"{len(evidence['warnings'])} warnings | "
+            f"{len(evidence['recommendations'])} recommendations"
         )
 
+        # ------------------------------------------------------------------
+        # Fireworks AI — receives ONLY verified structured evidence,
+        # never raw DataFrames or analytics dicts.
+        # ------------------------------------------------------------------
         try:
             answer = self.fireworks_service.generate_insight(
-                question=message, analytics_summary=summary, extra_instructions=extra_instructions
+                question=message,
+                evidence=evidence,
             )
         except FireworksServiceError as exc:
             logger.error(f"Fireworks Error: {exc}")
-            answer = self._fallback_answer(summary)
+            answer = self._fallback_answer(evidence)
 
         logger.info("Response Generated")
         logger.info(f"Execution Time: {round(time.time() - start_time, 2)}s")
         return answer
 
     @staticmethod
-    def _build_summary_for_intents(parsed, deals_df, wo_df) -> Dict[str, Any]:
-        summary: Dict[str, Any] = {}
-        intents = set(parsed.intents)
-
-        if "pipeline" in intents or "revenue" in intents:
-            summary["total_pipeline"] = ae.total_pipeline_value(
-                deals_df, only_open=parsed.only_open if parsed.only_open is not None else True
-            )
-        if "revenue" in intents or "sector_performance" in intents:
-            summary["revenue_by_sector"] = ae.revenue_by_sector(deals_df)
-        if "deals_by_stage" in intents:
-            summary["deals_by_stage"] = ae.deals_by_stage(deals_df)
-        if "pipeline" in intents:
-            summary["pipeline_by_probability"] = ae.pipeline_by_probability(deals_df)
-        if "upcoming_closures" in intents:
-            summary["upcoming_closures"] = ae.upcoming_closures(deals_df)
-        if "delayed_work_orders" in intents or "customer_lookup" in intents:
-            summary["delayed_work_orders"] = ae.delayed_work_orders(wo_df)
-        if "execution_summary" in intents:
-            summary["execution_summary"] = ae.execution_summary(wo_df)
-        if "billing_summary" in intents:
-            summary["billing_summary"] = ae.billing_summary(wo_df)
-        if "pending_receivables" in intents:
-            summary["pending_receivables"] = ae.pending_receivables(wo_df)
-        if "collection_summary" in intents:
-            summary["collection_summary"] = ae.collection_summary(wo_df)
-        if "customer_lookup" in intents:
-            summary["cross_board_customer_lookup"] = ae.cross_board_customer_lookup(deals_df, wo_df)
-
-        # Always guarantee at least something to work with.
-        if not summary:
-            summary["total_pipeline"] = ae.total_pipeline_value(deals_df, only_open=True)
-            summary["revenue_by_sector"] = ae.revenue_by_sector(deals_df)
-
-        return summary
-
-    @staticmethod
-    def _fallback_answer(summary: Dict[str, Any]) -> str:
+    def _fallback_answer(evidence: Dict[str, Any]) -> str:
         """Deterministic fallback used only if Fireworks is unreachable."""
-        parts = ["I couldn't reach the AI service, but here is the raw data I found:"]
-        for key, value in summary.items():
-            if key in ("data_quality", "filters_applied"):
-                continue
-            parts.append(f"\n**{key.replace('_', ' ').title()}**: {value}")
+        parts = ["I couldn't reach the AI service, but here is what I computed:"]
+        for fact in evidence.get("facts", []):
+            parts.append(f"• {fact}")
+        for warning in evidence.get("warnings", []):
+            parts.append(f"⚠ {warning}")
+        for rec in evidence.get("recommendations", []):
+            parts.append(f"→ {rec}")
         return "\n".join(parts)
