@@ -7,9 +7,18 @@
 
 set -euo pipefail
 
-export BACKEND_INTERNAL_PORT="${BACKEND_INTERNAL_PORT:-8000}"
 export PORT="${PORT:-8501}"
-export BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:${BACKEND_INTERNAL_PORT}}"
+
+# Prevent port collision if host environment sets PORT equal to BACKEND_INTERNAL_PORT (e.g. PORT=8000 on Render)
+if [ -z "${BACKEND_INTERNAL_PORT:-}" ] || [ "${BACKEND_INTERNAL_PORT}" -eq "${PORT}" ]; then
+    if [ "${PORT}" -eq 8000 ]; then
+        export BACKEND_INTERNAL_PORT=8001
+    else
+        export BACKEND_INTERNAL_PORT=8000
+    fi
+fi
+
+export BACKEND_URL="http://127.0.0.1:${BACKEND_INTERNAL_PORT}"
 
 BACKEND_PID=""
 FRONTEND_PID=""
